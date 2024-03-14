@@ -9,12 +9,15 @@ from param import *
 
 mqttc = mqtt.Client(mqtt.CallbackAPIVersion.VERSION2,"solarinverter2mqtt")
 
-mqttIsConnected=False
 prevparam = inverterParam()
 serialport = serial.Serial(None, 2400, timeout=0.5)
-
+debug=False
 def main():
-    #arg = sys.argv[1]
+    global debug
+    if(len(sys.argv)>1):
+        arg = sys.argv[1]
+        if(arg=="d"): debug=True
+    print("debug=",debug)
     serialport.port=serialdev
     serialport.open()
     serialport.reset_input_buffer()
@@ -39,43 +42,59 @@ def main():
 
 
 def mainLoop():
+    global debug
     param = inverterParam()
     global prevparam
     while(True):
         poll(param)
-        if(mqttIsConnected):
+        if(mqttc.is_connected()):
             txData2broker(param,prevparam)
         prevparam.loadwatt=param.loadwatt
         time.sleep(3)
 
 
 def txData2broker(param,prev):
-    try:
-        if abs(1-(param.loadwatt/prev.loadwatt)) > 0.01:
+    if abs(param.loadwatt-prev.loadwatt) > 20:
             mqttc.publish(loadwatttopic, param.loadwatt, qos=1)
-            #print("published ",loadwatttopic," ",param.loadwatt)
-    except Exception as e:
-        a=0
+    if abs(param.pvvoltage-prev.pvvoltage) > 10:
+            mqttc.publish(pvvoltagetopic, param.pvvoltage, qos=1)
+
 
 def poll(param):
-    #tx("QPIRI")
-    #response = serialport.readlines(None)
-    #print(response)
-    #param.loadwatt=float(response[4:4].decode())
-    #r=response[0]
-    #r=r[12:17]
-    #s=r.decode()
+    global debug
+    tx("QMOD")
+    response = serialport.readlines(None)
+    r=response[0]
+    if(debug): print("qmod: ",r)
+    param.inverterstatus=chr(r[1])
     
 
     tx("QPIGS")
     response = serialport.readlines(None)
     r=response[0]
-    #print(response)
-    try:
-        param.loadwatt=float(r[28:32].decode())
-        param.outputvoltage=float(r[12:17].decode())
-    except Exception as e:
-        a=0
+    if(debug): print("qpigs: ",r)
+    param.loadwatt=float(r[28:32].decode())
+    param.outputvoltage=float(r[12:17].decode())
+    param.batteryvoltage=float(r[41:46].decode())
+    param.batterychargingcurrent=float(r[47:50].decode())
+    param.batterycapacity=float(r[51:54].decode())
+    param.pvinputcurrent=float(r[60:64].decode())
+    param.pvinputvoltage=float(r[65:70].decode())
+    param.batterydischargingcurrent=float(r[77:82].decode())
+    param.pvchargingpower=float(r[98:103].decode())
+    if(debug):
+        print("param.inverterstatus",param.inverterstatus)
+        print("param.loadwatt",param.loadwatt)
+        print("param.outputvoltage",param.outputvoltage)
+        print("param.batteryvoltage",param.batteryvoltage)
+        print("param.batterychargingcurrent",param.batterychargingcurrent)
+        print("param.batterycapacity",param.batterycapacity)
+        print("param.pvinputcurrent",param.pvinputcurrent)
+        print("param.pvinputvoltage",param.pvinputvoltage)
+        print("param.batterydischargingcurrent",param.batterydischargingcurrent)
+        print("param.pvchargingpower",param.pvchargingpower)
+    
+        
 
 def tx(c):
     cmd=bytearray()
@@ -93,7 +112,6 @@ def on_connect(client, userdata, flags, reason_code, properties):
     global mqttIsConnected
     
     if reason_code=="Success":
-        mqttIsConnected=True
         # Subscribing in on_connect() means that if we lose the connection and
         # reconnect then subscriptions will be renewed.
         #client.subscribe("$SYS/#")
@@ -108,9 +126,7 @@ def on_connect_fail(client, userdata):
     mqttc.reconnect()
 
 def on_disconnect(client, userdata, disconnect_flags, reason_code, properties):
-    global mqttIsConnected
     print("disconnect event")
-    mqttIsConnected=False
     
 def on_log(client, userdata, level, buf):
     print(buf)
