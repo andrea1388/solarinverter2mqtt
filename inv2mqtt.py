@@ -1,3 +1,4 @@
+#!/usr/bin/env python3
 import paho.mqtt.client as mqtt
 import serial
 import time
@@ -12,6 +13,10 @@ mqttc = mqtt.Client(mqtt.CallbackAPIVersion.VERSION2,"solarinverter2mqtt")
 prevparam = inverterParam()
 serialport = serial.Serial(None, 2400, timeout=0.5)
 debug=False
+badresp=0
+noresp=0
+numreadings=0
+
 def main():
     global debug
     if(len(sys.argv)>1):
@@ -26,7 +31,7 @@ def main():
     mqttc.on_disconnect = on_disconnect
     mqttc.on_message = on_message
     mqttc.on_connect_fail = on_connect_fail
-    #mqttc.on_log = on_log
+    if(debug): mqttc.on_log = on_log
     mqttc.username_pw_set(mqttuser, mqttpwd)
     print (mqttuser, mqttpwd)
     mqttc.tls_set(certpath)
@@ -42,57 +47,101 @@ def main():
 
 
 def mainLoop():
-    global debug
+    global debug, numreadings
     param = inverterParam()
     global prevparam
+    lastSentTime=0
+    numreadings=0
     while(True):
+        numreadings=numreadings+1
         poll(param)
-        if(mqttc.is_connected()):
-            txData2broker(param,prevparam)
-        prevparam.loadwatt=param.loadwatt
+        if((time.time()-lastSentTime)>tSendInterval):
+            if(debug): print("send time")
+            if(mqttc.is_connected()):
+                txData2broker(param,prevparam)
+            numreadings=0
+            lastSentTime = time.time()
+
+        #prevparam.loadwatt=param.loadwatt
         time.sleep(3)
 
 
 def txData2broker(param,prev):
-    if abs(param.loadwatt-prev.loadwatt) > 20:
-            mqttc.publish(loadwatttopic, param.loadwatt, qos=1)
-    if abs(param.pvvoltage-prev.pvvoltage) > 10:
-            mqttc.publish(pvvoltagetopic, param.pvvoltage, qos=1)
+    global numreadings
+    if(debug): print("numreadings: ",numreadings)
+    param.loadwatt=int(param.loadwatt/numreadings)  
+    mqttc.publish(loadwatttopic, param.loadwatt, qos=1)
+    param.loadwatt=0
 
+    param.batterydischargingcurrent=int(param.batterydischargingcurrent/numreadings)  
+    mqttc.publish(dischargecurrtopic, param.batterydischargingcurrent, qos=1)
+    param.batterydischargingcurrent=0
+
+    param.batterychargingcurrent=int(param.batterychargingcurrent/numreadings)  
+    mqttc.publish(chargecurrtopic, param.batterychargingcurrent, qos=1)
+    param.batterychargingcurrent=0
+
+    param.batteryvoltage=int(param.batteryvoltage/numreadings)  
+    mqttc.publish(battvolttopic, param.batteryvoltage, qos=1)
+    param.batteryvoltage=0
+
+    param.pvchargingpower=int(param.pvchargingpower/numreadings)  
+    mqttc.publish(pvpowertopic, param.pvchargingpower, qos=1)
+    param.pvchargingpower=0
+
+    mqttc.publish(invertermodetopic, param.invertermode, qos=1)
+
+
+
+
+
+def validate(resp,explen):
+    global badresp,noresp
+    if(len(resp)>0):
+        r=resp[0]
+        if(len(r)==explen):
+            return True
+        else:
+            badresp=badresp+1
+    else:
+        noresp=noresp+1
+    return False
 
 def poll(param):
-    global debug
+    global debug, numreadings
+    serialport.reset_input_buffer()
     tx("QMOD")
     response = serialport.readlines(None)
-    r=response[0]
-    if(debug): print("qmod: ",r)
-    param.inverterstatus=chr(r[1])
-    
+    if validate(response,qmodlen):
+        r=response[0]
+        if(debug): print("qmod: len=",len(r)," r=",r)
+        param.invertermode=chr(r[1])
 
     tx("QPIGS")
     response = serialport.readlines(None)
-    r=response[0]
-    if(debug): print("qpigs: ",r)
-    param.loadwatt=float(r[28:32].decode())
-    param.outputvoltage=float(r[12:17].decode())
-    param.batteryvoltage=float(r[41:46].decode())
-    param.batterychargingcurrent=float(r[47:50].decode())
-    param.batterycapacity=float(r[51:54].decode())
-    param.pvinputcurrent=float(r[60:64].decode())
-    param.pvinputvoltage=float(r[65:70].decode())
-    param.batterydischargingcurrent=float(r[77:82].decode())
-    param.pvchargingpower=float(r[98:103].decode())
-    if(debug):
-        print("param.inverterstatus",param.inverterstatus)
-        print("param.loadwatt",param.loadwatt)
-        print("param.outputvoltage",param.outputvoltage)
-        print("param.batteryvoltage",param.batteryvoltage)
-        print("param.batterychargingcurrent",param.batterychargingcurrent)
-        print("param.batterycapacity",param.batterycapacity)
-        print("param.pvinputcurrent",param.pvinputcurrent)
-        print("param.pvinputvoltage",param.pvinputvoltage)
-        print("param.batterydischargingcurrent",param.batterydischargingcurrent)
-        print("param.pvchargingpower",param.pvchargingpower)
+    if validate(response,qpigslen):
+        r=response[0]
+        if(debug): print("qpigs: len=",len(r)," r=",r)
+        param.loadwatt=param.loadwatt+float(r[28:32].decode())
+        param.outputvoltage=param.outputvoltage+float(r[12:17].decode())
+        param.batteryvoltage=param.batteryvoltage+float(r[41:46].decode())
+        param.batterychargingcurrent=param.batterychargingcurrent+float(r[47:50].decode())
+        param.batterycapacity=float(r[51:54].decode())
+        param.pvinputcurrent=param.pvinputcurrent+float(r[60:64].decode())
+        param.pvinputvoltage=param.pvinputvoltage+float(r[65:70].decode())
+        param.batterydischargingcurrent=param.batterydischargingcurrent+float(r[77:82].decode())
+        param.pvchargingpower=param.pvchargingpower+float(r[98:103].decode())
+        if(debug):
+            print("param.invertermode",param.invertermode)
+            print("param.loadwatt",param.loadwatt/numreadings)
+            print("param.outputvoltage",param.outputvoltage/numreadings)
+            print("param.batteryvoltage",param.batteryvoltage/numreadings)
+            print("param.batterychargingcurrent",param.batterychargingcurrent/numreadings)
+            print("param.batterycapacity",param.batterycapacity)
+            print("param.pvinputcurrent",param.pvinputcurrent/numreadings)
+            print("param.pvinputvoltage",param.pvinputvoltage/numreadings)
+            print("param.batterydischargingcurrent",param.batterydischargingcurrent/numreadings)
+            print("param.pvchargingpower",param.pvchargingpower/numreadings)
     
         
 
