@@ -60,6 +60,15 @@ def mainLoop():
             if(mqttc.is_connected()):
                 txData2broker(param,prevparam)
             numreadings=0
+            param.loadwatt=0
+            param.batterydischargingcurrent=0
+            param.batterychargingcurrent=0
+            param.batteryvoltage=0
+            param.outputvoltage=0
+            param.pvchargingpower=0
+            param.pvinputcurrent=0
+            param.pvinputvoltage==0
+            param.pvchargingpower=0
             lastSentTime = time.time()
 
         #prevparam.loadwatt=param.loadwatt
@@ -71,24 +80,19 @@ def txData2broker(param,prev):
     if(debug): print("numreadings: ",numreadings)
     param.loadwatt=int(param.loadwatt/numreadings)  
     mqttc.publish(loadwatttopic, param.loadwatt, qos=1)
-    param.loadwatt=0
-
+    
     param.batterydischargingcurrent=int(param.batterydischargingcurrent/numreadings)  
     mqttc.publish(dischargecurrtopic, param.batterydischargingcurrent, qos=1)
-    param.batterydischargingcurrent=0
-
+    
     param.batterychargingcurrent=int(param.batterychargingcurrent/numreadings)  
     mqttc.publish(chargecurrtopic, param.batterychargingcurrent, qos=1)
-    param.batterychargingcurrent=0
-
-    param.batteryvoltage=int(param.batteryvoltage/numreadings)  
+    
+    param.batteryvoltage=round(param.batteryvoltage/numreadings,2)  
     mqttc.publish(battvolttopic, param.batteryvoltage, qos=1)
-    param.batteryvoltage=0
-
+    
     param.pvchargingpower=int(param.pvchargingpower/numreadings)  
     mqttc.publish(pvpowertopic, param.pvchargingpower, qos=1)
-    param.pvchargingpower=0
-
+    
     mqttc.publish(invertermodetopic, param.invertermode, qos=1)
 
 
@@ -122,15 +126,15 @@ def poll(param):
     if validate(response,qpigslen):
         r=response[0]
         if(debug): print("qpigs: len=",len(r)," r=",r)
-        param.loadwatt=param.loadwatt+float(r[28:32].decode())
+        param.loadwatt=param.loadwatt+int(r[28:32].decode())
         param.outputvoltage=param.outputvoltage+float(r[12:17].decode())
         param.batteryvoltage=param.batteryvoltage+float(r[41:46].decode())
-        param.batterychargingcurrent=param.batterychargingcurrent+float(r[47:50].decode())
-        param.batterycapacity=float(r[51:54].decode())
-        param.pvinputcurrent=param.pvinputcurrent+float(r[60:64].decode())
+        param.batterychargingcurrent=param.batterychargingcurrent+int(r[47:50].decode())
+        param.batterycapacity=int(r[51:54].decode())
+        param.pvinputcurrent=param.pvinputcurrent+int(r[60:64].decode())
         param.pvinputvoltage=param.pvinputvoltage+float(r[65:70].decode())
-        param.batterydischargingcurrent=param.batterydischargingcurrent+float(r[77:82].decode())
-        param.pvchargingpower=param.pvchargingpower+float(r[98:103].decode())
+        param.batterydischargingcurrent=param.batterydischargingcurrent+int(r[77:82].decode())
+        param.pvchargingpower=param.pvchargingpower+int(r[98:103].decode())
         if(debug):
             print("param.invertermode",param.invertermode)
             print("param.loadwatt",param.loadwatt/numreadings)
